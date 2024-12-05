@@ -311,7 +311,8 @@ class MapCreatorApp(QWidget):
         self.setLayout(self.layout)
 
         self.folder_path = None
-        self.output_file_path = None
+        self.output_file_path = os.path.join(os.path.expanduser("~"), "AppData", "LocalLow", "F2Games", "GoreBox", "Maps", "CustomMap.gbmap")
+        self.output_label.setText(f'Output file: {self.output_file_path}')
 
         self.refresh_import_list()
 
@@ -325,7 +326,8 @@ class MapCreatorApp(QWidget):
     def browse_output_file(self):
         options = QFileDialog.Options()
         default_file_name = "CustomMap.gbmap"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Output File", default_file_name, "GBMAP Files (*.gbmap)", options=options)
+        default_dir = os.path.join(os.path.expanduser("~"), "AppData", "LocalLow", "F2Games", "GoreBox", "Maps")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Output File", os.path.join(default_dir, default_file_name), "GBMAP Files (*.gbmap)", options=options)
         if file_path:
             self.output_file_path = file_path
             self.output_label.setText(f'Output file: {file_path}')
@@ -447,5 +449,3 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"Error: {e}")
         traceback.print_exc()
-
-
