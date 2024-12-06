@@ -1,10 +1,11 @@
 import os
+import shutil
 from PIL import Image
 import sys
 import traceback
 import time
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QMessageBox, QTextEdit, QHBoxLayout, QProgressBar, QTabWidget, QLineEdit, QTabBar, QScrollArea, QGridLayout
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDateTime
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QDateTime, QTimer
 from PyQt5.QtGui import QIcon
 
 def convert_png_to_ints(file_path):
@@ -205,7 +206,7 @@ class MapCreatorApp(QWidget):
 
     def initUI(self):
         self.setWindowTitle('GoreBox Map Exporter')
-        self.setGeometry(100, 100, 800, 450)
+        self.setGeometry(100, 100, 800, 600)  # Increased the height to accommodate the custom textures list
         self.layout = QVBoxLayout()
 
         self.tab_widget = QTabWidget()
@@ -302,6 +303,43 @@ class MapCreatorApp(QWidget):
         self.map_description_input.setPlaceholderText('Leave empty for original description')
         self.basic_info_layout.addWidget(self.map_description_input)
 
+        self.custom_textures_label = QLabel('No Map Project Chosen')
+        self.custom_textures_label.setAlignment(Qt.AlignCenter)
+        self.basic_info_layout.addWidget(self.custom_textures_label)
+
+        self.custom_textures_scroll_area = QScrollArea()
+        self.custom_textures_scroll_area.setWidgetResizable(True)
+        self.custom_textures_scroll_area.setMinimumHeight(450)  # Increased the minimum height
+        self.custom_textures_scroll_content = QWidget()
+        self.custom_textures_scroll_layout = QGridLayout()
+
+        self.custom_textures_scroll_content.setLayout(self.custom_textures_scroll_layout)
+        self.custom_textures_scroll_area.setWidget(self.custom_textures_scroll_content)
+        self.basic_info_layout.addWidget(self.custom_textures_scroll_area)
+
+        # Add a spacer to create some space between the scroll area and the buttons
+        self.basic_info_layout.addSpacing(10)
+
+        # Add buttons for changing and reverting textures
+        self.button_layout = QHBoxLayout()
+        self.button_layout.setContentsMargins(0, 0, 0, 0)  # Remove any margins
+        self.button_layout.setSpacing(2)  # Set a very small spacing between the buttons
+
+        self.change_texture_button = QPushButton('Change Texture')
+        self.change_texture_button.clicked.connect(self.change_texture)
+        self.button_layout.addWidget(self.change_texture_button)
+
+        self.revert_texture_button = QPushButton('Revert Texture')
+        self.revert_texture_button.clicked.connect(self.revert_texture)
+        self.button_layout.addWidget(self.revert_texture_button)
+
+        self.basic_info_layout.addLayout(self.button_layout)
+
+        # Add label to display the selected texture's name
+        self.selected_texture_label = QLabel('')
+        self.selected_texture_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        self.basic_info_layout.addWidget(self.selected_texture_label)
+
         self.basic_info_layout.addStretch(1)
 
         self.basic_info_tab.setLayout(self.basic_info_layout)
@@ -314,14 +352,22 @@ class MapCreatorApp(QWidget):
         self.output_file_path = os.path.join(os.path.expanduser("~"), "AppData", "LocalLow", "F2Games", "GoreBox", "Maps", "CustomMap.gbmap")
         self.output_label.setText(f'Output file: {self.output_file_path}')
 
+        self.original_textures = {}
+        self.changed_textures = {}
+
         self.refresh_import_list()
+        self.refresh_custom_textures_list()
 
     def browse_folder(self):
+        # Revert all images before changing the map project path
+        self.revert_all_textures()
+
         options = QFileDialog.Options()
         folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", options=options)
         if folder_path:
             self.folder_path = folder_path
             self.folder_label.setText(f'Folder path: {folder_path}')
+            self.refresh_custom_textures_list()
 
     def browse_output_file(self):
         options = QFileDialog.Options()
@@ -396,7 +442,6 @@ class MapCreatorApp(QWidget):
     def refresh_import_list(self):
         user_home = os.path.expanduser("~")
         map_projects_dir = os.path.join(user_home, "AppData", "LocalLow", "F2Games", "GoreBox", "MapProjects")
-
         if not os.path.exists(map_projects_dir):
             QMessageBox.warning(self, "Warning", "MapProjects directory does not exist.")
             return
@@ -436,9 +481,139 @@ class MapCreatorApp(QWidget):
                 self.import_scroll_layout.addWidget(label, idx // 5 * 2 + 1, idx % 5)
 
     def on_folder_button_clicked(self, folder_path):
-        self.folder_path = folder_path
-        self.folder_label.setText(f'Folder path: {folder_path}')
-        self.tab_widget.setCurrentWidget(self.export_tab)
+        if self.is_valid_map_project(folder_path):
+            self.folder_path = folder_path
+            self.folder_label.setText(f'Folder path: {folder_path}')
+            self.tab_widget.setCurrentWidget(self.export_tab)
+            self.refresh_custom_textures_list()
+        else:
+            QMessageBox.warning(self, "Warning", "The selected folder is not a valid map project.")
+
+    def refresh_custom_textures_list(self):
+        if not self.folder_path or not self.is_valid_map_project(self.folder_path):
+            self.custom_textures_label.setText('No Map Project Chosen')
+            for i in reversed(range(self.custom_textures_scroll_layout.count())):
+                widget = self.custom_textures_scroll_layout.itemAt(i).widget()
+                if widget is not None:
+                    widget.setParent(None)
+            return
+
+        self.custom_textures_label.setText('Custom Textures')
+        custom_textures_path = os.path.join(self.folder_path, "CustomTextures")
+
+        if not os.path.exists(custom_textures_path):
+            QMessageBox.warning(self, "Warning", "CustomTextures directory does not exist.")
+            return
+
+        textures = [f for f in os.listdir(custom_textures_path) if f.endswith(('.png', '.jpg'))]
+
+        for i in reversed(range(self.custom_textures_scroll_layout.count())):
+            widget = self.custom_textures_scroll_layout.itemAt(i).widget()
+            if widget is not None:
+                widget.setParent(None)
+
+        def add_texture_button(idx, texture, texture_path):
+            button = QPushButton()
+            button.setFixedSize(80, 80)
+            button.setStyleSheet("background-color: lightgray; border: 1px solid gray;")
+            button.setProperty('texture_path', texture_path)  # Store the texture path in the button's property
+
+            icon = QIcon(texture_path)
+            button.setIcon(icon)
+            button.setIconSize(button.size())
+
+            button.clicked.connect(lambda checked, btn=button: self.select_texture_button(btn))
+
+            self.custom_textures_scroll_layout.addWidget(button, idx // 5 * 2, idx % 5)
+
+            label = QLabel(texture)
+            label.setAlignment(Qt.AlignCenter)
+            label.setWordWrap(True)
+            self.custom_textures_scroll_layout.addWidget(label, idx // 5 * 2 + 1, idx % 5)
+
+        for idx, texture in enumerate(textures):
+            texture_path = os.path.join(custom_textures_path, texture)
+            QTimer.singleShot(idx * 50, lambda idx=idx, texture=texture, texture_path=texture_path: add_texture_button(idx, texture, texture_path))
+
+    def select_texture_button(self, button):
+        self.selected_texture_button = button
+        texture_path = button.property('texture_path')
+        texture_name = os.path.basename(texture_path)
+        self.selected_texture_label.setText(texture_name)
+
+    def change_texture(self):
+        if self.selected_texture_button is None:
+            QMessageBox.warning(self, "Warning", "Please select a texture to change.")
+            return
+
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select New Texture", "", "Images (*.png *.jpg)", options=options)
+        if file_path:
+            # Get the original texture path
+            original_texture_path = self.selected_texture_button.property('texture_path')
+            if original_texture_path:
+                # Backup the original texture
+                if original_texture_path not in self.original_textures:
+                    self.original_textures[original_texture_path] = os.path.join(os.path.dirname(original_texture_path), f"original_{os.path.basename(original_texture_path)}")
+                    shutil.copyfile(original_texture_path, self.original_textures[original_texture_path])
+
+                # Replace the texture while keeping the original name
+                shutil.copyfile(file_path, original_texture_path)
+                # Store the changed texture path
+                self.changed_textures[original_texture_path] = file_path
+                # Refresh the button's image
+                icon = QIcon(original_texture_path)
+                self.selected_texture_button.setIcon(icon)
+                self.selected_texture_button.setIconSize(self.selected_texture_button.size())
+
+    def revert_texture(self):
+        if self.selected_texture_button is None:
+            QMessageBox.warning(self, "Warning", "Please select a texture to revert.")
+            return
+
+        original_texture_path = self.selected_texture_button.property('texture_path')
+        if original_texture_path in self.original_textures:
+            # Revert to the original texture
+            shutil.copyfile(self.original_textures[original_texture_path], original_texture_path)
+            # Refresh the button's image
+            icon = QIcon(original_texture_path)
+            self.selected_texture_button.setIcon(icon)
+            self.selected_texture_button.setIconSize(self.selected_texture_button.size())
+            # Remove the changed texture path from the dictionary
+            if original_texture_path in self.changed_textures:
+                del self.changed_textures[original_texture_path]
+
+    def revert_all_textures(self):
+        # Revert all images to their original state
+        for original_path in self.original_textures.values():
+            if os.path.exists(original_path):
+                original_texture_path = list(self.original_textures.keys())[list(self.original_textures.values()).index(original_path)]
+                shutil.copyfile(original_path, original_texture_path)
+        # Clear the changed textures dictionary
+        self.changed_textures.clear()
+
+    def is_valid_map_project(self, folder_path):
+        required_files = ["projectFile.gbi", "icon.png", "banner.png"]
+        required_folders = ["MapData", "CustomTextures"]
+
+        for file in required_files:
+            if not os.path.exists(os.path.join(folder_path, file)):
+                return False
+
+        for folder in required_folders:
+            if not os.path.exists(os.path.join(folder_path, folder)):
+                return False
+
+        return True
+
+    def closeEvent(self, event):
+        # Revert all images to their original state
+        self.revert_all_textures()
+        # Clean up temporary files
+        for original_path in self.original_textures.values():
+            if os.path.exists(original_path):
+                os.remove(original_path)
+        event.accept()
 
 if __name__ == '__main__':
     try:
